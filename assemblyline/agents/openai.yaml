@@ -1,0 +1,4 @@
+interface:
+  display_name: "Assemblyline"
+  short_description: "Build Codex assembly-line scripts"
+  default_prompt: "Use $assemblyline to create a Codex assembly-line script for this repo."
