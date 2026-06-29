@@ -4,7 +4,23 @@
 >
 >   –Terry Pratchett
 
-This repo holds a template for agent workspace. Clone with `git clone git@github.com:AaronStGeorge/ws-template.git <project>-ws`, and clone what you're working on into `sources`. Then you're off to the races! Except rather than horses, agents are zipping around — consuming tokens, farting carbon, and hopefully doing something useful.
+This repo holds an agent workspace template. Clone `git clone git@github.com:AaronStGeorge/ws-template.git <project>-ws`, then clone what you're working on into `sources`, and you're off to the races! Except rather than horses, agents are zipping around — consuming tokens, farting carbon, and hopefully doing something useful.
+
+This workspace is designed around a containment strategy. I build chutes and gates so my little horde of mercurial genius-idiots has to run in vaguely the right direction. On the ground, that looks like `assemblyline` scripts and lots of specially built tools. Tools for agents are intended to be repeatable, consistent, button presses.
+
+My agents' little hammers built in Python. Not for any particular reason. Most things would probably work. Maybe not Tcl. I know Python and it's now slopped out at your local agent farm for a few cents a pound, so... sure.
+
+## Setup
+
+`direnv` will do it all for you, alternatively:
+```bash
+python3 -m venv .venv --prompt ${PWD##*/} && source .venv/bin/activate
+pip install -e lib/python --config-settings editable_mode=compat
+```
+
+`editable_mode=compat` makes the install a plain path entry rather than a PEP
+660 import hook, static analyzers (Pylance/pyright in VS Code) have an issue
+without that for some unknown reason.
 
 ## Layout
 
@@ -39,26 +55,6 @@ an assembly-line script, a standalone single-file build skill, anything — reac
   always lands in `<source_dir>/build`, so builds behave the same for a worktree or a clone in
   `sources/`.
 
-## Install
-
-```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -e lib/python --config-settings editable_mode=compat
-```
-
-That's it — `import assemblyline`, `from buildlib import ...`, and `from builds.toy_ml import build`
-now work from anywhere, including from inside a target repo or worktree.
-
-`editable_mode=compat` makes the install a plain path entry rather than a PEP 660 import
-hook, so static analyzers (Pylance/pyright in VS Code) resolve the packages too — not just the
-runtime.
-
-Quick check:
-
-```bash
-python -m unittest discover -s lib/python/tests   # library regression tests
-python -c "from builds.toy_ml import build, ToyMlKnobs; r = build(ToyMlKnobs(source_dir='skills/assemblyline/examples/toy-tasks/toy-ml')); print('built:', r.built, '-> build at', r.build_path)"
-```
 
 ## Example: the ReLU assembly line
 
