@@ -1,10 +1,10 @@
-# skills
+# ws-template
 
 > The trouble with having an open mind, of course, is that people will insist on coming along and trying to put things in it.
 >
 >   –Terry Pratchett
 
-This repo holds agent **skills** plus a small **shared Python library** they build on.
+This repo holds a tempalte for agent workspace. Clone with `git clone git@github.com:AaronStGeorge/ws-template.git <project>-ws`, and clone what you're working on into `sources`. Then you're off to the races! Except rather than horses, it's agents zipping around -- consuming tokens, farting carbon, and hopefully doing something useful.
 
 ## Layout
 
