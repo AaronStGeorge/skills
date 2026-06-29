@@ -2,13 +2,18 @@
 
 Read this when writing or changing non-trivial assembly-line scripts.
 
-## Import Bootstrap
+## Imports
 
-Target-repo scripts should import through the skill path:
+`assemblyline` is installed (editable) from the workspace shared library at `lib/python/`:
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -e lib/python
+```
+
+Scripts then import it directly — no `sys.path` bootstrap and no `ASSEMBLYLINE_SKILL_DIR`:
 
 ```python
-skill_dir = Path(os.environ["ASSEMBLYLINE_SKILL_DIR"]).expanduser().resolve()
-sys.path.insert(0, str(skill_dir / "lib" / "python"))
 from assemblyline import (
     CodexStep,
     CodexStepError,
@@ -23,7 +28,7 @@ from assemblyline import (
 )
 ```
 
-Fail clearly when `ASSEMBLYLINE_SKILL_DIR` is missing or does not contain `lib/python/assemblyline`.
+The same install exposes the build libraries `buildlib` (the `BuildKnobs` and `BuildResult` typed dataclass bases, plus `resolve_source_dir` and `build_dir`) and `builds` (one `build(knobs, *deps)` function per project, e.g. `from builds.toy_ml import build`).
 
 The template accepts optional `--log-level {quiet,info,debug}`, defaults to `TerminalLogLevel.INFO`, and lets `argparse` fail clearly for invalid values. This is template policy; direct `RunContext` construction must pass `terminal_logging` explicitly.
 

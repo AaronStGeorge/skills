@@ -6,13 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-SKILL_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = SKILL_DIR / "examples"
-LIB_DIR = SKILL_DIR / "lib" / "python"
-if str(LIB_DIR) not in sys.path:
-    sys.path.insert(0, str(LIB_DIR))
-
-from assemblyline import (  # noqa: E402
+from assemblyline import (
     CodexStep,
     LineOutcome,
     RunContext,
@@ -22,10 +16,13 @@ from assemblyline import (  # noqa: E402
     TaskSpec,
     TerminalLogLevel,
 )
-from relu_steps import Review  # noqa: E402
+from builds import toy_ml
+from relu_steps import Review
 
 
-CheckMap = dict[str, ShellCheckResult | None]
+SKILL_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = SKILL_DIR / "examples"
+TOY_ML_SOURCE = REPO_ROOT / "toy-tasks" / "toy-ml"
 
 
 def main() -> int:
@@ -72,43 +69,61 @@ def main() -> int:
 
 
 def run_line(ctx: RunContext) -> LineOutcome:
-    baseline = run_cmake_triplet(ctx, "baseline", ctx.store.run_dir / "baseline-build")
-    if not _check_ok(baseline["configure"]) or not _check_ok(baseline["build"]):
+    knobs = toy_ml.ToyMlKnobs(source_dir=str(TOY_ML_SOURCE))
+
+    baseline = toy_ml.build(knobs)
+    if not baseline.built:
         return LineOutcome.failed(
             reason="baseline_unavailable",
-            message="Baseline configure/build did not pass before running Codex.",
-            details={"checks": summarize_checks(baseline)},
+            message="Baseline build did not succeed before running Codex.",
+            details={"baseline": baseline.as_prompt_input()},
         )
-    if _check_ok(baseline["test"]):
+    baseline_test = run_tests(ctx, "baseline-test", baseline.build_path)
+    if baseline_test.ok:
         return LineOutcome.failed(
             reason="baseline_already_solved",
-            message="Baseline CTest already passed; the toy task is already solved.",
-            details={"checks": summarize_checks(baseline)},
+            message="Baseline tests already passed; the toy task is already solved.",
+            details={
+                "baseline": baseline.as_prompt_input(),
+                "test": baseline_test.as_prompt_input(),
+            },
         )
 
     maker = CodexStep("maker", "workspace-write", build_maker_prompt)
-    maker.run(ctx, {"baseline": summarize_checks(baseline)})
+    maker.run(
+        ctx,
+        {"baseline": baseline.as_prompt_input(), "test": baseline_test.as_prompt_input()},
+    )
     ctx.store.capture_git_diff("after-maker.patch", paths=[ctx.task.target_path])
 
-    final_checks = run_cmake_triplet(ctx, "after-maker", ctx.store.run_dir / "after-maker-build")
-    if not checks_ok(final_checks):
+    after = toy_ml.build(knobs)
+    if not after.built:
         return LineOutcome.failed(
-            reason="post_checks_failed",
-            message="Post-maker deterministic checks did not pass.",
-            details={"checks": summarize_checks(final_checks)},
+            reason="post_build_failed",
+            message="Post-maker build did not succeed.",
+            details={"build": after.as_prompt_input()},
+        )
+    after_test = run_tests(ctx, "after-maker-test", after.build_path)
+    if not after_test.ok:
+        return LineOutcome.failed(
+            reason="post_tests_failed",
+            message="Post-maker tests did not pass.",
+            details={"build": after.as_prompt_input(), "test": after_test.as_prompt_input()},
         )
 
     review = Review("review-after-maker", build_review_prompt)
     result = review.run(
         ctx,
         {
-            "checks": summarize_checks(final_checks),
+            "build": after.as_prompt_input(),
+            "test": after_test.as_prompt_input(),
             "patch_name": "after-maker.patch",
             "patch": read_artifact(ctx.store, "after-maker.patch"),
         },
     )
     details = {
-        "checks": summarize_checks(final_checks),
+        "build": after.as_prompt_input(),
+        "test": after_test.as_prompt_input(),
         "review": result.as_prompt_input(),
     }
     if not result.review_ok:
@@ -124,51 +139,11 @@ def run_line(ctx: RunContext) -> LineOutcome:
     )
 
 
-def run_cmake_triplet(ctx: RunContext, label: str, build_dir: Path) -> CheckMap:
-    source_dir = ctx.repo_root / ctx.task.target_path
-    build_dir.mkdir(parents=True, exist_ok=True)
-    configure = ShellCheck(
-        f"{label}-configure",
-        ["cmake", "-S", source_dir, "-B", build_dir],
+def run_tests(ctx: RunContext, name: str, build_path: Path) -> ShellCheckResult:
+    return ShellCheck(
+        name,
+        ["ctest", "--test-dir", str(build_path), "--output-on-failure"],
     ).run(ctx)
-
-    build = ShellCheck(
-        f"{label}-build",
-        ["cmake", "--build", build_dir],
-    ).run(ctx)
-    if not configure.ok or not build.ok:
-        return {"configure": configure, "build": build, "test": None}
-
-    test = ShellCheck(
-        f"{label}-test",
-        ["ctest", "--test-dir", build_dir, "--output-on-failure"],
-    ).run(ctx)
-    return {"configure": configure, "build": build, "test": test}
-
-
-def checks_ok(checks: CheckMap) -> bool:
-    return all(_check_ok(check) for check in checks.values())
-
-
-def _check_ok(check: ShellCheckResult | None) -> bool:
-    return check is not None and check.ok
-
-
-def summarize_checks(checks: CheckMap) -> dict[str, Any]:
-    summary: dict[str, Any] = {}
-    for key, value in checks.items():
-        if value is None:
-            summary[key] = {
-                "ok": False,
-                "skipped": True,
-                "reason": "Skipped because an earlier check failed.",
-            }
-            continue
-        summary[key] = {
-            **value.as_prompt_input(),
-            "skipped": False,
-        }
-    return summary
 
 
 def read_artifact(store: RunStore, relative_path: str) -> str:
@@ -184,11 +159,14 @@ def build_maker_prompt(ctx: RunContext, inputs: Mapping[str, Any]) -> str:
 Task:
 {ctx.task.as_prompt_input()}
 
-Baseline checks:
+Baseline build:
 {inputs.get("baseline")}
 
+Baseline tests (currently failing):
+{inputs.get("test")}
+
 Implement the requested change in the repository. Keep the change focused under {ctx.task.target_path}.
-Run or reason against the CMake/CTest checks before finishing.
+Run or reason against the CMake build and CTest before finishing.
 """
 
 
@@ -200,8 +178,11 @@ Review the completed task without editing files.
 Task:
 {ctx.task.as_prompt_input()}
 
-Deterministic checks:
-{inputs.get("checks")}
+Build result:
+{inputs.get("build")}
+
+Test result:
+{inputs.get("test")}
 
 Patch artifact: {inputs.get("patch_name")}
 ```diff

@@ -11,14 +11,18 @@ Assemblyline provides small Python primitives for code-owned Codex loops. Use it
 
 Copy `assets/templates/assembly_line.py` into the target repo as `assembly-lines/<task>_line.py`, and copy `assets/templates/line_steps.py` next to it. Keep these files in the target repo; do not edit the target repo `.gitignore` just to add assemblyline.
 
-Require callers to set `ASSEMBLYLINE_SKILL_DIR` to this skill directory:
+`assemblyline` is part of the shared library at `lib/python/` in this workspace (alongside the build libraries `buildlib` and `builds`). Install it once, editable, so scripts can import it from anywhere — including from inside a target repo or worktree:
 
 ```bash
-export ASSEMBLYLINE_SKILL_DIR=/path/to/skills/assemblyline
-python3 assembly-lines/<task>_line.py
+python -m venv .venv && . .venv/bin/activate
+pip install -e lib/python
 ```
 
-The template prepends `$ASSEMBLYLINE_SKILL_DIR/lib/python` to `sys.path` and imports the bundled `assemblyline` package from there. Keep that bootstrap in generated scripts so target repos do not need to vendor or install the library.
+With that environment active, run a line directly. The template imports `assemblyline` by normal import with no path bootstrap:
+
+```bash
+python assembly-lines/<task>_line.py
+```
 
 The template accepts optional `--log-level {quiet,info,debug}` to choose terminal progress logging; the template default is `info`. Full prompts, raw Codex JSONL, command output, and decisions remain in run artifacts.
 

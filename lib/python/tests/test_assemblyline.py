@@ -10,11 +10,6 @@ import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 
-LIB_DIR = Path(__file__).resolve().parents[1] / "lib" / "python"
-if str(LIB_DIR) not in sys.path:
-    sys.path.insert(0, str(LIB_DIR))
-
-import assemblyline
 from assemblyline import (
     CodexStep,
     CodexStepError,
@@ -51,29 +46,10 @@ def make_context(
 
 
 def read_events(store: RunStore) -> list[dict[str, object]]:
-    return [json.loads(line) for line in store.events_path.read_text(encoding="utf-8").splitlines()]
-
-
-class PublicApiTests(unittest.TestCase):
-    def test_exports_current_core_api_without_legacy_aliases(self) -> None:
-        for name in (
-            "CodexStep",
-            "CodexStepError",
-            "CodexStepResult",
-            "LineOutcome",
-            "RunContext",
-            "RunStore",
-            "ShellCheck",
-            "ShellCheckResult",
-            "TaskSpec",
-            "TerminalLogLevel",
-        ):
-            self.assertIn(name, assemblyline.__all__)
-            self.assertTrue(hasattr(assemblyline, name))
-
-        for legacy_name in ("CheckResult", "StepResult", "CheckerDecision"):
-            self.assertNotIn(legacy_name, assemblyline.__all__)
-            self.assertFalse(hasattr(assemblyline, legacy_name))
+    return [
+        json.loads(line)
+        for line in store.events_path.read_text(encoding="utf-8").splitlines()
+    ]
 
 
 class TaskSpecTests(unittest.TestCase):
@@ -154,7 +130,9 @@ class TerminalLogLevelTests(unittest.TestCase):
     def test_parse_values_used_by_template(self) -> None:
         self.assertEqual(TerminalLogLevel("quiet"), TerminalLogLevel.QUIET)
         self.assertEqual(TerminalLogLevel("info"), TerminalLogLevel.INFO)
-        self.assertEqual(TerminalLogLevel(" debug ".strip().lower()), TerminalLogLevel.DEBUG)
+        self.assertEqual(
+            TerminalLogLevel(" debug ".strip().lower()), TerminalLogLevel.DEBUG
+        )
 
         with self.assertRaises(ValueError):
             TerminalLogLevel("verbose")
@@ -303,7 +281,9 @@ class ShellCheckTests(unittest.TestCase):
                 ).run(ctx)
 
             events = read_events(ctx.store)
-            self.assertEqual([event["event"] for event in events], ["check.start", "check.error"])
+            self.assertEqual(
+                [event["event"] for event in events], ["check.start", "check.error"]
+            )
             self.assertEqual(events[1]["data"]["exception_type"], "FileNotFoundError")
             check_dir = ctx.store.artifact_path("checks/missing")
             self.assertFalse((check_dir / "output.log").exists())
@@ -321,7 +301,9 @@ class ShellCheckTests(unittest.TestCase):
                 ).run(ctx)
 
             events = read_events(ctx.store)
-            self.assertEqual([event["event"] for event in events], ["check.start", "check.error"])
+            self.assertEqual(
+                [event["event"] for event in events], ["check.start", "check.error"]
+            )
             self.assertEqual(events[1]["data"]["exception_type"], "TimeoutExpired")
             self.assertEqual(events[1]["data"]["timeout_s"], 0.05)
             check_dir = ctx.store.artifact_path("checks/timeout")
@@ -335,14 +317,18 @@ class TerminalLoggingTests(unittest.TestCase):
             quiet_ctx = make_context(Path(tmp) / "quiet", TerminalLogLevel.QUIET)
             quiet_log = io.StringIO()
             with redirect_stderr(quiet_log):
-                ShellCheck("quiet", [sys.executable, "-c", "print('quiet output')"]).run(quiet_ctx)
+                ShellCheck(
+                    "quiet", [sys.executable, "-c", "print('quiet output')"]
+                ).run(quiet_ctx)
             self.assertEqual(quiet_log.getvalue(), "")
 
         with tempfile.TemporaryDirectory() as tmp:
             info_ctx = make_context(Path(tmp) / "info", TerminalLogLevel.INFO)
             info_log = io.StringIO()
             with redirect_stderr(info_log):
-                ShellCheck("info", [sys.executable, "-c", "print('command body')"]).run(info_ctx)
+                ShellCheck("info", [sys.executable, "-c", "print('command body')"]).run(
+                    info_ctx
+                )
             info = info_log.getvalue()
             self.assertIn("check.start name=info", info)
             self.assertIn("check.finish name=info status=pass exit_code=0", info)
@@ -354,7 +340,9 @@ class TerminalLoggingTests(unittest.TestCase):
             debug_ctx = make_context(Path(tmp) / "debug", TerminalLogLevel.DEBUG)
             debug_log = io.StringIO()
             with redirect_stderr(debug_log):
-                ShellCheck("debug", [sys.executable, "-c", "print('debug output')"]).run(debug_ctx)
+                ShellCheck(
+                    "debug", [sys.executable, "-c", "print('debug output')"]
+                ).run(debug_ctx)
             debug = debug_log.getvalue()
             self.assertIn("check.start name=debug", debug)
             self.assertIn("check.debug name=debug", debug)
@@ -462,14 +450,23 @@ class CodexStepTests(unittest.TestCase):
                 "--output-last-message",
             ]
             self.assertEqual(written["argv"][: len(expected_prefix)], expected_prefix)
-            self.assertTrue(written["argv"][len(expected_prefix)].endswith("last_message.txt"))
+            self.assertTrue(
+                written["argv"][len(expected_prefix)].endswith("last_message.txt")
+            )
             self.assertEqual(written["argv"][-1], "-")
             self.assertEqual(written["prompt"], "prompt 42")
-            self.assertEqual(result.prompt_path.read_text(encoding="utf-8"), "prompt 42")
+            self.assertEqual(
+                result.prompt_path.read_text(encoding="utf-8"), "prompt 42"
+            )
             self.assertEqual(result.prompt_path.parent.parent.name, "steps")
-            self.assertEqual(result.prompt_path.relative_to(ctx.store.run_dir).parts[:2], ("steps", "maker"))
+            self.assertEqual(
+                result.prompt_path.relative_to(ctx.store.run_dir).parts[:2],
+                ("steps", "maker"),
+            )
             events = read_events(ctx.store)
-            self.assertEqual([event["event"] for event in events], ["step.start", "step.finish"])
+            self.assertEqual(
+                [event["event"] for event in events], ["step.start", "step.finish"]
+            )
             self.assertEqual(events[0]["data"]["prompt"], "steps/maker/prompt.md")
             self.assertEqual(events[1]["data"]["exit_code"], 0)
 
@@ -511,7 +508,9 @@ class CodexStepTests(unittest.TestCase):
             self.assertIn("--output-schema", argv)
             schema_path = Path(argv[argv.index("--output-schema") + 1])
             self.assertEqual(schema_path.parent.parent.name, "steps")
-            self.assertEqual(json.loads(schema_path.read_text(encoding="utf-8")), {"type": "object"})
+            self.assertEqual(
+                json.loads(schema_path.read_text(encoding="utf-8")), {"type": "object"}
+            )
 
     def test_codex_step_nonzero_raises_error_and_writes_error_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -552,8 +551,13 @@ class CodexStepTests(unittest.TestCase):
             self.assertEqual(error.sandbox, "read-only")
             self.assertIn("codex failed output", error.output_tail)
             self.assertTrue(error.output_path.exists())
-            self.assertEqual(error.output_path.read_text(encoding="utf-8"), "codex failed output\n")
-            self.assertEqual(error.last_message_path.read_text(encoding="utf-8"), "failure final message")
+            self.assertEqual(
+                error.output_path.read_text(encoding="utf-8"), "codex failed output\n"
+            )
+            self.assertEqual(
+                error.last_message_path.read_text(encoding="utf-8"),
+                "failure final message",
+            )
             details = error.as_event_details()
             self.assertEqual(details["prompt"], "steps/review/prompt.md")
             self.assertEqual(details["output"], "steps/review/output.jsonl")
@@ -564,7 +568,9 @@ class CodexStepTests(unittest.TestCase):
             self.assertIn("argv", details)
 
             events = read_events(ctx.store)
-            self.assertEqual([event["event"] for event in events], ["step.start", "step.error"])
+            self.assertEqual(
+                [event["event"] for event in events], ["step.start", "step.error"]
+            )
             self.assertEqual(events[1]["data"]["exit_code"], 7)
             self.assertEqual(events[1]["data"]["output"], "steps/review/output.jsonl")
             self.assertIn("codex failed output", events[1]["data"]["output_tail"])

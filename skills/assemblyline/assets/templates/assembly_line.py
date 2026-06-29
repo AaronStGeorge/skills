@@ -2,34 +2,12 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-
-def require_skill_dir() -> Path:
-    raw = os.environ.get("ASSEMBLYLINE_SKILL_DIR")
-    if not raw:
-        raise SystemExit(
-            "ASSEMBLYLINE_SKILL_DIR is not set. Set it to the assemblyline skill directory, "
-            "for example: export ASSEMBLYLINE_SKILL_DIR=/path/to/skills/assemblyline"
-        )
-
-    skill_dir = Path(raw).expanduser().resolve()
-    lib_dir = skill_dir / "lib" / "python"
-    if not (lib_dir / "assemblyline").is_dir():
-        raise SystemExit(
-            f"ASSEMBLYLINE_SKILL_DIR does not contain lib/python/assemblyline: {skill_dir}"
-        )
-    sys.path.insert(0, str(lib_dir))
-    return skill_dir
-
-
-SKILL_DIR = require_skill_dir()
-
-from assemblyline import (  # noqa: E402
+from assemblyline import (
     CodexStep,
     LineOutcome,
     RunContext,
@@ -39,7 +17,7 @@ from assemblyline import (  # noqa: E402
     TaskSpec,
     TerminalLogLevel,
 )
-from line_steps import Review  # noqa: E402
+from line_steps import Review
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
