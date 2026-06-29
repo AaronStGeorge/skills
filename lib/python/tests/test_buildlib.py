@@ -7,6 +7,8 @@ from enum import Enum
 from pathlib import Path
 
 from buildlib import BuildKnobs, BuildResult, build_dir, resolve_source_dir
+from builds.hrx_system import HrxSystemBuildResult, HrxSystemKnobs
+from builds.hrx_system import _cmake_targets as hrx_cmake_targets
 from builds.toy_ml import ToyMlBuildResult, ToyMlKnobs
 
 
@@ -66,6 +68,80 @@ class BuildResultTests(unittest.TestCase):
         self.assertIsInstance(result, BuildResult)
         self.assertIs(result.knobs, knobs)
         self.assertTrue(result.built)
+
+
+class HrxSystemKnobsTests(unittest.TestCase):
+    def test_source_dir_and_rocm_path_are_required(self) -> None:
+        with self.assertRaises(TypeError):
+            HrxSystemKnobs()  # type: ignore[call-arg]
+        with self.assertRaises(TypeError):
+            HrxSystemKnobs(source_dir="/x/hrx")  # type: ignore[call-arg]
+
+    def test_subclass_is_a_buildknobs(self) -> None:
+        self.assertIsInstance(
+            HrxSystemKnobs(source_dir="/x/hrx", rocm_path="/opt/rocm"), BuildKnobs
+        )
+
+    def test_as_dict_stringifies_typed_fields(self) -> None:
+        knobs = HrxSystemKnobs(
+            source_dir="/x/hrx",
+            rocm_path="/opt/rocm",
+            gfx_targets="gfx1151",
+            jobs=8,
+            loom_build=False,
+        )
+        self.assertEqual(
+            knobs.as_dict(),
+            {
+                "source_dir": "/x/hrx",
+                "rocm_path": "/opt/rocm",
+                "gfx_targets": "gfx1151",
+                "build_type": "RelWithDebInfo",
+                "jobs": "8",
+                "loom_build": "false",
+                "install": "true",
+                "install_tests": "false",
+            },
+        )
+
+    def test_cmake_targets_normalizes_separators(self) -> None:
+        self.assertEqual(hrx_cmake_targets("gfx1151, gfx1100; gfx1201"), "gfx1151;gfx1100;gfx1201")
+
+
+class HrxSystemBuildResultTests(unittest.TestCase):
+    def test_built_and_installed_reflect_exit_codes(self) -> None:
+        knobs = HrxSystemKnobs(source_dir="/x/hrx", rocm_path="/opt/rocm")
+        result = HrxSystemBuildResult(
+            project="hrx-system",
+            knobs=knobs,
+            source_path=Path("/x/hrx"),
+            build_path=Path("/x/hrx/build"),
+            configure_exit_code=0,
+            build_exit_code=0,
+            install_exit_code=0,
+            install_path=Path("/x/hrx/build/install"),
+            log="",
+        )
+        self.assertIsInstance(result, BuildResult)
+        self.assertIs(result.knobs, knobs)
+        self.assertTrue(result.built)
+        self.assertTrue(result.installed)
+
+    def test_built_is_false_when_compile_fails(self) -> None:
+        knobs = HrxSystemKnobs(source_dir="/x/hrx", rocm_path="/opt/rocm")
+        result = HrxSystemBuildResult(
+            project="hrx-system",
+            knobs=knobs,
+            source_path=Path("/x/hrx"),
+            build_path=Path("/x/hrx/build"),
+            configure_exit_code=0,
+            build_exit_code=1,
+            install_exit_code=None,
+            install_path=None,
+            log="",
+        )
+        self.assertFalse(result.built)
+        self.assertFalse(result.installed)
 
 
 if __name__ == "__main__":
