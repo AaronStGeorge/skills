@@ -8,3 +8,7 @@ build/
 
 # Assembly-line run artifacts
 .runs/
+
+# Coding agent stuff
+.claude
+.codex
