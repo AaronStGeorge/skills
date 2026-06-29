@@ -4,7 +4,7 @@
 >
 >   –Terry Pratchett
 
-This repo holds a tempalte for agent workspace. Clone with `git clone git@github.com:AaronStGeorge/ws-template.git <project>-ws`, and clone what you're working on into `sources`. Then you're off to the races! Except rather than horses, it's agents zipping around -- consuming tokens, farting carbon, and hopefully doing something useful.
+This repo holds a template for agent workspace. Clone with `git clone git@github.com:AaronStGeorge/ws-template.git <project>-ws`, and clone what you're working on into `sources`. Then you're off to the races! Except rather than horses, agents are zipping around — consuming tokens, farting carbon, and hopefully doing something useful.
 
 ## Layout
 
