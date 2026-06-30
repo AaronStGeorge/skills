@@ -57,17 +57,19 @@ class RocmInstallKnobs(BuildKnobs):
 class PinnedTarballKnobs(RocmInstallKnobs):
     """Knobs for the pinned, whole-SDK tarball provider.
 
-    The pin (``version`` + gfx-templated ``url_template``) is *not* carried here --
-    it is read from ``pins.json`` at the repo root via :attr:`pin`, so a pin bump
-    is a one-line change in one version-controlled file. ``gfx_target`` is a
-    required, explicit *input* (it
-    selects the per-architecture nightly tarball and is supplied on the command
-    line by the calling script), never read from ``pins.json`` and never
-    defaulted; it is templated into the pin's ``url_template`` together with the
-    resolved ``version``.
+    The pin -- just the ``version`` -- is *not* carried here: it is read from
+    ``pins.json`` at the repo root via :attr:`pin`, so a pin bump is a one-line
+    change in one version-controlled file. The URL form and the gfx->token table
+    are constants in code (:func:`_tarball_url`, :data:`_GFX_URL_TARGETS`), not pin
+    data. ``gfx_target`` is a required, explicit *input*: a *plain* arch number
+    such as ``1201`` (never a ``gfx``-prefixed string), supplied on the command
+    line by the calling script and never read from ``pins.json`` nor defaulted. It
+    selects the per-architecture nightly tarball by being looked up in
+    :data:`_GFX_URL_TARGETS` (see :func:`_url_target`) and assembled with the
+    resolved ``version`` into the download URL.
     """
 
-    gfx_target: str  # AMDGPU arch input (required); selects the per-arch tarball
+    gfx_target: str  # plain AMDGPU arch number input (required), e.g. "1201"
     pin: str = "rocm"  # key to look up in the repo-root pins.json
     cache_dir: str = ""  # download/extract cache root; "" -> ~/.cache/hrx/rocm
     link_name: str = "rocm-root"  # symlink created under <source_dir>/build
@@ -141,9 +143,10 @@ def build(knobs: RocmInstallKnobs) -> RocmInstallResult:
 def _build_pinned_tarball(knobs: PinnedTarballKnobs) -> RocmInstallResult:
     """Download a pinned whole-SDK tarball, extract it, and link it in.
 
-    The pin (``version`` + ``url_template``) is read from ``pins.json`` via
-    ``knobs.pin``; the gfx target comes from ``knobs.gfx_target`` (an input) and is
-    templated into the URL. The ``tarball-multi-arch`` nightly channel publishes no
+    The pin (just ``version``) is read from ``pins.json`` via ``knobs.pin``; the
+    plain gfx number in ``knobs.gfx_target`` (an input) is mapped through the
+    in-code :data:`_GFX_URL_TARGETS` table to a tarball token and assembled into
+    the download URL. The ``tarball-multi-arch`` nightly channel publishes no
     checksums, so the download is not hash-verified. The tarball is cached at
     ``<cache_dir>/<version>-<gfx>`` and only re-fetched when the pin (recorded in a
     marker file) does not match, so repeated builds are cheap. The SDK root is then
@@ -201,25 +204,65 @@ def _build_pinned_tarball(knobs: PinnedTarballKnobs) -> RocmInstallResult:
     )
 
 
-def _resolve_pin(knobs: PinnedTarballKnobs) -> tuple[str, str]:
-    """Resolve (url, version) for ``knobs`` from ``pins.json``.
+# How a per-arch nightly tarball URL is built. Only the *version* is a pin (it
+# changes on every bump and so lives in pins.json); everything below is a stable
+# structural fact about TheRock's ``tarball-multi-arch`` publishing layout, so it
+# lives in code rather than masquerading as pin data.
+_NIGHTLY_CHANNEL = "https://rocm.nightlies.amd.com/tarball-multi-arch"
+_TARBALL_STEM = "therock-dist-linux"
 
-    ``version`` and ``url_template`` come from the pin; ``gfx_target`` (an input,
-    not from the pin) is templated into the URL. The pin is always read from the
-    repo-root ``pins.json`` (discovered by ``load_pin_entry``).
+# Plain AMDGPU arch number -> the published ``tarball-multi-arch`` bundle token
+# that ships it. This is an explicit lookup table, never a derivation rule,
+# because the token is *not* a function of the number: ``1201`` rides in the
+# ``gfx120X-all`` family bundle while ``1151`` is published standalone as
+# ``gfx1151``. Support a new arch by adding one (verified) row here.
+_GFX_URL_TARGETS = {
+    "1200": "gfx120X-all",
+    "1201": "gfx120X-all",
+    "1151": "gfx1151",
+}
+
+
+def _resolve_pin(knobs: PinnedTarballKnobs) -> tuple[str, str]:
+    """Resolve (url, version) for ``knobs``.
+
+    The only pin is the ``version``, read from the repo-root ``pins.json``
+    (discovered by ``load_pin_entry``). The URL is then built in code from that
+    version and the plain arch number in ``knobs.gfx_target`` (an input): the
+    number is mapped via the in-code :data:`_GFX_URL_TARGETS` table to a published
+    tarball token and assembled by :func:`_tarball_url`.
     """
     entry = load_pin_entry(knobs.pin)
     version = entry.get("version")
-    template = entry.get("url_template")
-    if not version or not template:
-        raise RocmInstallError(f"pin {knobs.pin!r} must define 'version' and 'url_template'")
-    try:
-        url = template.format(gfx=knobs.gfx_target, version=version)
-    except (KeyError, IndexError, ValueError) as exc:
+    if not version:
+        raise RocmInstallError(f"pin {knobs.pin!r} must define 'version'")
+    return _tarball_url(_url_target(knobs), version), version
+
+
+def _tarball_url(url_target: str, version: str) -> str:
+    """Assemble the nightly tarball URL from its constant parts and the version."""
+    return f"{_NIGHTLY_CHANNEL}/{_TARBALL_STEM}-{url_target}-{version}.tar.gz"
+
+
+def _url_target(knobs: PinnedTarballKnobs) -> str:
+    """Map the plain gfx arch number to its ROCm tarball *target token*.
+
+    The pipeline threads a plain arch number (``1201``); the published
+    ``tarball-multi-arch`` bundle that ships it is *not* a simple function of that
+    number -- ``1201`` lives in the ``gfx120X-all`` family bundle while ``1151`` is
+    published standalone as ``gfx1151`` -- so the mapping is the explicit in-code
+    :data:`_GFX_URL_TARGETS` table, never a derivation rule. An arch with no row
+    fails here with an actionable error rather than fetching a guessed, wrong URL.
+    """
+    target = _GFX_URL_TARGETS.get(knobs.gfx_target)
+    if not target:
+        have = ", ".join(sorted(_GFX_URL_TARGETS)) or "none"
         raise RocmInstallError(
-            f"pin {knobs.pin!r} url_template is malformed: {exc}"
-        ) from exc
-    return url, version
+            f"no ROCm tarball target for gfx {knobs.gfx_target!r}; add a "
+            f"'{knobs.gfx_target}' entry to _GFX_URL_TARGETS in builds/rocm.py "
+            f"(have: {have})"
+        )
+    return target
 
 
 def _cache_root(knobs: PinnedTarballKnobs) -> Path:

@@ -40,9 +40,14 @@ def _tar_gz(source_dir: Path, archive: Path) -> None:
             tf.add(child, arcname=child.name)
 
 
-def _entry(url_template: str) -> dict:
-    """A ``pins.json`` ``rocm`` entry as ``load_pin_entry`` would return it."""
-    return {"version": "7.14.0", "url_template": url_template}
+def _resolved(url: str, version: str = "7.14.0"):
+    """Patch :func:`builds.rocm._resolve_pin` to a fixed ``(url, version)``.
+
+    The download/extract/cache/symlink mechanics tests care only about what the
+    provider does *given* a resolved URL, so they pin one here (typically a local
+    ``file://`` archive) instead of reaching through pins.json + URL building.
+    """
+    return mock.patch.object(rocm, "_resolve_pin", return_value=(url, version))
 
 
 class RocmKnobsTests(unittest.TestCase):
@@ -118,14 +123,66 @@ class RocmBuildDispatchTests(unittest.TestCase):
 
 
 class PinsTests(unittest.TestCase):
-    def test_repo_root_pins_json_has_rocm_entry(self) -> None:
-        # The committed pins.json at the repo root resolves and carries the
-        # gfx-templated URL the README documents. The build always reads this
-        # file -- the location is not configurable.
+    def test_repo_root_pins_json_carries_only_the_version(self) -> None:
+        # pins.json holds just the pin -- the version that changes per bump. The
+        # URL form and the gfx->token table are constants in code, not pin data.
         entry = load_pin_entry("rocm")
-        self.assertIn("{gfx}", entry["url_template"])
-        self.assertIn("{version}", entry["url_template"])
         self.assertTrue(entry["version"])
+        self.assertNotIn("url_template", entry)
+        self.assertNotIn("gfx_url_targets", entry)
+
+    def test_committed_version_resolves_to_bundle_url(self) -> None:
+        # The committed version (from pins.json) + the in-code table + URL form
+        # must resolve a plain arch number to the bundle URL: 1201 -> gfx120X-all.
+        version = load_pin_entry("rocm")["version"]
+        knobs = PinnedTarballKnobs(source_dir="/x/repo", gfx_target="1201")
+        url, resolved_version = rocm._resolve_pin(knobs)
+        self.assertEqual(resolved_version, version)
+        self.assertEqual(
+            url,
+            "https://rocm.nightlies.amd.com/tarball-multi-arch/"
+            f"therock-dist-linux-gfx120X-all-{version}.tar.gz",
+        )
+
+
+class ResolvePinTests(unittest.TestCase):
+    def test_builds_url_from_in_code_table_and_version(self) -> None:
+        # Only the version comes from pins.json; the URL is assembled in code.
+        knobs = PinnedTarballKnobs(source_dir="/x/repo", gfx_target="1201")
+        with mock.patch.object(rocm, "load_pin_entry", return_value={"version": "9.9.9"}):
+            url, version = rocm._resolve_pin(knobs)
+        self.assertEqual(version, "9.9.9")
+        self.assertEqual(
+            url,
+            "https://rocm.nightlies.amd.com/tarball-multi-arch/"
+            "therock-dist-linux-gfx120X-all-9.9.9.tar.gz",
+        )
+
+    def test_standalone_family_uses_its_own_token(self) -> None:
+        # 1151 is published standalone as gfx1151 (not a gfx115X family bundle):
+        # proof the mapping is an explicit table, not a derived rule.
+        knobs = PinnedTarballKnobs(source_dir="/x/repo", gfx_target="1151")
+        with mock.patch.object(rocm, "load_pin_entry", return_value={"version": "9.9.9"}):
+            url, _ = rocm._resolve_pin(knobs)
+        self.assertIn("therock-dist-linux-gfx1151-9.9.9.tar.gz", url)
+
+    def test_unmapped_gfx_fails_cleanly(self) -> None:
+        # A gfx number with no row in the in-code table fails with an actionable
+        # error naming the missing arch -- never fetching a guessed URL.
+        knobs = PinnedTarballKnobs(source_dir="/x/repo", gfx_target="9999")
+        with mock.patch.object(rocm, "load_pin_entry", return_value={"version": "9.9.9"}):
+            with self.assertRaises(rocm.RocmInstallError) as cm:
+                rocm._resolve_pin(knobs)
+        message = str(cm.exception)
+        self.assertIn("no ROCm tarball target for gfx '9999'", message)
+        self.assertIn("_GFX_URL_TARGETS", message)
+
+    def test_missing_version_fails_cleanly(self) -> None:
+        knobs = PinnedTarballKnobs(source_dir="/x/repo", gfx_target="1201")
+        with mock.patch.object(rocm, "load_pin_entry", return_value={}):
+            with self.assertRaises(rocm.RocmInstallError) as cm:
+                rocm._resolve_pin(knobs)
+        self.assertIn("must define 'version'", str(cm.exception))
 
 
 class PinnedTarballBuildTests(unittest.TestCase):
@@ -146,8 +203,7 @@ class PinnedTarballBuildTests(unittest.TestCase):
                 cache_dir=str(tmp_path / "cache"),
             )
 
-            entry = _entry(archive.as_uri())
-            with mock.patch.object(rocm, "load_pin_entry", return_value=entry):
+            with _resolved(archive.as_uri()):
                 result = rocm.build(knobs)
                 self.assertTrue(result.installed, msg=result.log)
                 self.assertEqual(result.provider, RocmProvider.PINNED_TARBALL)
@@ -168,8 +224,7 @@ class PinnedTarballBuildTests(unittest.TestCase):
             tmp_path = Path(tmp)
             repo = tmp_path / "repo"
             repo.mkdir()
-            entry = _entry("file:///nope/does-not-exist.tar.gz")
-            with mock.patch.object(rocm, "load_pin_entry", return_value=entry):
+            with _resolved("file:///nope/does-not-exist.tar.gz"):
                 result = rocm.build(
                     PinnedTarballKnobs(
                         source_dir=str(repo),
@@ -180,25 +235,6 @@ class PinnedTarballBuildTests(unittest.TestCase):
             self.assertFalse(result.installed)
             self.assertEqual(result.exit_code, 1)
             self.assertIn("download failed", result.log)
-
-    def test_gfx_target_templated_into_url(self) -> None:
-        # The URL the provider fetches is the pin template with the gfx input
-        # substituted -- proving gfx is an input, not read from the pin.
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            repo = tmp_path / "repo"
-            repo.mkdir()
-            entry = _entry("file:///nope/therock-dist-linux-{gfx}-{version}.tar.gz")
-            with mock.patch.object(rocm, "load_pin_entry", return_value=entry):
-                result = rocm.build(
-                    PinnedTarballKnobs(
-                        source_dir=str(repo),
-                        gfx_target="gfx1100",
-                        cache_dir=str(tmp_path / "cache"),
-                    )
-                )
-            self.assertFalse(result.installed)  # file does not exist
-            self.assertIn("therock-dist-linux-gfx1100-7.14.0.tar.gz", result.log)
 
     def test_unknown_pin_fails_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -218,45 +254,6 @@ class PinnedTarballBuildTests(unittest.TestCase):
             self.assertIn("KeyError", result.log)
             self.assertIn("rocm", result.log)
 
-    def test_incomplete_pin_fails_cleanly(self) -> None:
-        for entry in (
-            {},
-            {"version": "7.14.0"},
-            {"url_template": "file:///x-{gfx}-{version}.tar.gz"},
-        ):
-            with tempfile.TemporaryDirectory() as tmp:
-                tmp_path = Path(tmp)
-                repo = tmp_path / "repo"
-                repo.mkdir()
-                with mock.patch.object(rocm, "load_pin_entry", return_value=entry):
-                    result = rocm.build(
-                        PinnedTarballKnobs(
-                            source_dir=str(repo),
-                            gfx_target=GFX,
-                            cache_dir=str(tmp_path / "cache"),
-                        )
-                    )
-                self.assertFalse(result.installed, msg=f"entry={entry}")
-                self.assertIn("must define", result.log)
-
-    def test_malformed_url_template_fails_cleanly(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            repo = tmp_path / "repo"
-            repo.mkdir()
-            # Unknown placeholder -> .format raises -> clear pin diagnostic.
-            entry = {"version": "7.14.0", "url_template": "file:///x-{nope}.tar.gz"}
-            with mock.patch.object(rocm, "load_pin_entry", return_value=entry):
-                result = rocm.build(
-                    PinnedTarballKnobs(
-                        source_dir=str(repo),
-                        gfx_target=GFX,
-                        cache_dir=str(tmp_path / "cache"),
-                    )
-                )
-            self.assertFalse(result.installed)
-            self.assertIn("url_template is malformed", result.log)
-
     def test_unlocatable_sdk_fails_cleanly(self) -> None:
         # A tarball with two top-level dirs has no single SDK root to descend into.
         with tempfile.TemporaryDirectory() as tmp:
@@ -271,7 +268,7 @@ class PinnedTarballBuildTests(unittest.TestCase):
 
             repo = tmp_path / "repo"
             repo.mkdir()
-            with mock.patch.object(rocm, "load_pin_entry", return_value=_entry(archive.as_uri())):
+            with _resolved(archive.as_uri()):
                 result = rocm.build(
                     PinnedTarballKnobs(
                         source_dir=str(repo),
@@ -304,13 +301,13 @@ class PinnedTarballBuildTests(unittest.TestCase):
             knobs = PinnedTarballKnobs(
                 source_dir=str(repo), gfx_target=GFX, cache_dir=str(tmp_path / "cache")
             )
-            with mock.patch.object(rocm, "load_pin_entry", return_value=_entry(arc_a.as_uri())):
+            with _resolved(arc_a.as_uri()):
                 r1 = rocm.build(knobs)
             self.assertTrue(r1.installed, msg=r1.log)
             link = repo / "build" / "rocm-root"
             self.assertTrue((link / "bin" / "marker_a").exists())
 
-            with mock.patch.object(rocm, "load_pin_entry", return_value=_entry(arc_b.as_uri())):
+            with _resolved(arc_b.as_uri()):
                 r2 = rocm.build(knobs)
             self.assertTrue(r2.installed, msg=r2.log)
             self.assertNotIn("Cached ROCm pin", r2.log)  # url mismatch -> re-extract
@@ -333,7 +330,7 @@ class PinnedTarballBuildTests(unittest.TestCase):
             knobs = PinnedTarballKnobs(
                 source_dir=str(repo), gfx_target=GFX, cache_dir=str(cache)
             )
-            with mock.patch.object(rocm, "load_pin_entry", return_value=_entry(archive.as_uri())):
+            with _resolved(archive.as_uri()):
                 r1 = rocm.build(knobs)
                 self.assertTrue(r1.installed, msg=r1.log)
 
@@ -362,7 +359,7 @@ class PinnedTarballBuildTests(unittest.TestCase):
             real.mkdir(parents=True)
             (real / "stale").write_text("x")
 
-            with mock.patch.object(rocm, "load_pin_entry", return_value=_entry(archive.as_uri())):
+            with _resolved(archive.as_uri()):
                 result = rocm.build(
                     PinnedTarballKnobs(
                         source_dir=str(repo),

@@ -205,7 +205,7 @@ def _configure_argv(src: Path, out: Path, rocm: Path, knobs: HrxSystemKnobs) -> 
         "-DIREE_HAL_DRIVER_LOCAL_SYNC=ON",
         "-DIREE_HAL_DRIVER_LOCAL_TASK=ON",
         "-DIREE_HAL_DRIVER_NULL=ON",
-        f"-DIREE_HAL_AMDGPU_TARGETS={_cmake_targets(knobs.gfx_targets)}",
+        f"-DIREE_HAL_AMDGPU_TARGETS={_cmake_gfx_target_list(knobs.gfx_targets)}",
     ]
     if knobs.loom_build:
         argv.append("-DLOOM_BUILD=ON")
@@ -220,10 +220,16 @@ def _install_argv(out: Path, prefix: Path, component: str) -> list[str]:
     ]
 
 
-def _cmake_targets(raw: str) -> str:
-    """Normalize a comma/semicolon target list to CMake's ``;`` separated form."""
+def _cmake_gfx_target_list(raw: str) -> str:
+    """Normalize a comma/semicolon target list to CMake's ``;`` separated form.
+
+    Each token is also given the ``gfx`` prefix IREE expects when it is missing,
+    so a bare arch as threaded from ``--gfx`` (e.g. ``1201``) becomes the valid
+    ``IREE_HAL_AMDGPU_TARGETS`` value ``gfx1201``; tokens already prefixed are
+    left as-is.
+    """
     parts = [p.strip() for p in raw.replace(",", ";").split(";") if p.strip()]
-    return ";".join(parts)
+    return ";".join(p if p[:3].lower() == "gfx" else f"gfx{p}" for p in parts)
 
 
 def _run(argv: list[str], log_parts: list[str]) -> int:

@@ -18,8 +18,9 @@ def load_pin_entry(name: str) -> dict[str, Any]:
     The committed :data:`PINS_FILE` is the only source of truth for what each pinned
     build module fetches; its location is fixed so every build in the repo sees the
     same pins. The entry's shape is owned by the consuming module -- e.g. the ROCm
-    pin carries a ``version`` and a gfx-templated ``url_template`` -- so this loader
-    stays schema-agnostic and only resolves the file and the top-level key. Raises
+    pin carries just a ``version`` (the URL form and gfx->token table are constants
+    in ``builds.rocm``, not pin data) -- so this loader stays schema-agnostic and
+    only resolves the file and the top-level key. Raises
     ``KeyError`` if the pin is absent and ``FileNotFoundError`` if ``pins.json`` is
     missing.
     """

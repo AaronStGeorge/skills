@@ -11,7 +11,7 @@ from buildlib import BuildKnobs, BuildResult, build_dir, resolve_source_dir
 from builds import hrx_system
 from builds.hrx_system import HrxSystemBuildResult, HrxSystemKnobs
 from builds.hrx_system import _already_configured, _write_configure_marker
-from builds.hrx_system import _cmake_targets as hrx_cmake_targets
+from builds.hrx_system import _cmake_gfx_target_list as hrx_cmake_targets
 from builds.rocm import PinnedTarballKnobs, RocmInstallResult, RocmProvider
 from builds.toy_ml import ToyMlBuildResult, ToyMlKnobs
 
@@ -104,6 +104,13 @@ class HrxSystemKnobsTests(unittest.TestCase):
 
     def test_cmake_targets_normalizes_separators(self) -> None:
         self.assertEqual(hrx_cmake_targets("gfx1151, gfx1100; gfx1201"), "gfx1151;gfx1100;gfx1201")
+
+    def test_cmake_targets_adds_gfx_prefix_to_bare_arch(self) -> None:
+        # A bare arch as threaded from --gfx gets the gfx prefix IREE expects,
+        # while already-prefixed tokens are left untouched.
+        self.assertEqual(hrx_cmake_targets("1201"), "gfx1201")
+        self.assertEqual(hrx_cmake_targets("1201, 1100"), "gfx1201;gfx1100")
+        self.assertEqual(hrx_cmake_targets("gfx1201, 1100"), "gfx1201;gfx1100")
 
 
 class HrxConfigureSkipTests(unittest.TestCase):

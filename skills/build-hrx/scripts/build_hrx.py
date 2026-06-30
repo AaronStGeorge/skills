@@ -34,6 +34,24 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 HRX_SOURCE = REPO_ROOT / "sources" / "hrx-system"
 
 
+def _plain_gfx(value: str) -> str:
+    """argparse type: require a *plain* AMDGPU arch number like ``1201``.
+
+    The pipeline threads a plain number end to end -- the ROCm provider looks it up
+    in ``pins.json``'s ``gfx_url_targets`` table and the HRX build prepends the
+    ``gfx`` IREE expects -- so a ``gfx``-prefixed value is rejected here rather than
+    silently breaking that one convention downstream.
+    """
+    gfx = value.strip()
+    if not gfx:
+        raise argparse.ArgumentTypeError("--gfx must not be empty")
+    if gfx.lower().startswith("gfx"):
+        raise argparse.ArgumentTypeError(
+            f"expected a plain arch number like 1201, not {value!r} -- drop the 'gfx' prefix"
+        )
+    return gfx
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="build_hrx.py",
@@ -42,8 +60,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--gfx",
         required=True,
-        help="AMDGPU architecture, e.g. gfx1151. Threaded into both the ROCm "
-        "tarball selection and the HRX AMDGPU targets.",
+        type=_plain_gfx,
+        help="Plain AMDGPU arch number, e.g. 1201 (no 'gfx' prefix). Threaded into "
+        "both the ROCm tarball selection (via pins.json's gfx_url_targets table) and "
+        "the HRX AMDGPU targets.",
     )
     parser.add_argument(
         "--dry-run",
